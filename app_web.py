@@ -7,7 +7,7 @@ import os
 SAVE_FILE = 'saved_selections_web.json'
 
 # --- Função para carregar e processar os dados do Excel (versão completa) ---
-@st.cache_data # Cache para performance
+@st.cache_data
 def load_meal_data(filename):
     try:
         df = pd.read_excel(filename, sheet_name='Planilha1', header=None)
@@ -74,37 +74,35 @@ def save_selections_to_file(selections):
     with open(SAVE_FILE, 'w') as f:
         json.dump(selections, f, indent=4)
 
+# Callback para corrigir o bug do duplo clique
+def update_session_selection():
+    st.session_state.current_selection = st.session_state.multiselect_key
+
 # --- Interface do Aplicativo Web ---
 st.set_page_config(layout="wide", page_title="Calculadora de Dieta")
 st.title("📱 Calculadora de Dieta Completa")
 
-# Carrega os dados da planilha
 meal_data = load_meal_data('Dieta.xlsx')
 
 if meal_data:
     lista_de_refeicoes = list(meal_data.keys())
 
-    # --- INICIALIZAÇÃO DO ESTADO DA SESSÃO ---
     if 'saved_selections' not in st.session_state:
         st.session_state.saved_selections = load_saved_selections()
     if 'current_selection' not in st.session_state:
         st.session_state.current_selection = []
 
-    # --- PAINEL LATERAL (SIDEBAR) PARA SALVAR/CARREGAR ---
     with st.sidebar:
         st.header("Combinações Salvas")
-        
         saved_options = list(st.session_state.saved_selections.keys())
         if not saved_options:
             st.write("Nenhuma combinação salva.")
         
-        # Carregar combinação
         selected_to_load = st.selectbox("Carregar uma combinação:", saved_options, index=None, placeholder="Escolha para carregar...")
         if st.button("Carregar", use_container_width=True) and selected_to_load:
             st.session_state.current_selection = st.session_state.saved_selections[selected_to_load]
             st.rerun()
 
-        # Salvar combinação
         st.write("---")
         save_name = st.text_input("Nome para salvar a seleção atual:")
         if st.button("Salvar", use_container_width=True) and save_name:
@@ -115,7 +113,6 @@ if meal_data:
             else:
                 st.warning("Selecione algumas refeições primeiro!")
         
-        # Excluir combinação
         st.write("---")
         selected_to_delete = st.selectbox("Excluir uma combinação:", saved_options, index=None, placeholder="Escolha para excluir...")
         if st.button("Excluir", type="primary", use_container_width=True) and selected_to_delete:
@@ -124,26 +121,36 @@ if meal_data:
             st.success(f"'{selected_to_delete}' excluída!")
             st.rerun()
 
-
-    # --- PAINEL PRINCIPAL ---
     st.header("Selecione suas Refeições:")
     
     refeicoes_selecionadas = st.multiselect(
         label="Escolha as refeições para somar os macros:",
         options=lista_de_refeicoes,
-        default=st.session_state.current_selection, # Usa o estado da sessão para definir o padrão
+        default=st.session_state.current_selection,
+        key='multiselect_key',
+        on_change=update_session_selection,
         label_visibility="collapsed"
     )
-    # Atualiza o estado da sessão com a seleção atual do usuário
-    st.session_state.current_selection = refeicoes_selecionadas
     
     st.write("---")
 
     if refeicoes_selecionadas:
+        # Lógica de ordenação flexível e corrigida
+        ORDER_KEYS = ["Café", "Treino", "Almoço", "Lanche", "Janta", "Ceia"]
+
+        def get_sort_index(meal_name):
+            meal_name_lower = meal_name.lower()
+            for i, key in enumerate(ORDER_KEYS):
+                if key.lower() in meal_name_lower:
+                    return i
+            return len(ORDER_KEYS)
+
+        sorted_refeicoes = sorted(refeicoes_selecionadas, key=get_sort_index)
+
         totals = {'Gordura': 0, 'Carboidrato': 0, 'Proteína': 0, 'Calorias': 0}
         individual_macros = []
 
-        for meal_name in refeicoes_selecionadas:
+        for meal_name in sorted_refeicoes:
             macros = meal_data[meal_name]
             totals['Gordura'] += macros['Gordura']
             totals['Carboidrato'] += macros['Carboidrato']
@@ -167,15 +174,13 @@ if meal_data:
         
         st.write("---")
 
-        # --- PAINEL DE MACROS INDIVIDUAIS ---
         st.header("📋 Macros por Refeição:")
         df_individual = pd.DataFrame(individual_macros)
-        st.dataframe(df_individual.style.format("{:.1f}", subset=['Calorias', 'Carboidratos', 'Proteínas', 'Gorduras']), use_container_width=True)
+        st.dataframe(df_individual.set_index('Refeição').style.format("{:.1f}"), use_container_width=True)
 
-        # --- PAINEL DE PRÉ-VISUALIZAÇÃO DE ALIMENTOS ---
         st.header("🥗 Alimentos da Seleção:")
         with st.expander("Clique aqui para ver os detalhes dos alimentos"):
-            for meal_name in refeicoes_selecionadas:
+            for meal_name in sorted_refeicoes:
                 st.subheader(f"{meal_name}")
                 items = meal_data[meal_name].get('Items', [])
                 if items:
@@ -183,13 +188,12 @@ if meal_data:
                         main_item = item_data['item']
                         sub_item = item_data.get('sub')
                         if sub_item:
-                            # Usa a sintaxe de markdown do Streamlit para o itálico
                             st.markdown(f"{main_item}  / *{sub_item}*")
                         else:
                             st.markdown(main_item)
                 else:
                     st.write("Nenhum alimento detalhado.")
-                st.write("") # Adiciona um espaço
+                st.write("")
 
     else:
         st.info("⬅️ Selecione uma ou mais refeições ou carregue uma combinação na barra lateral.")
